@@ -118,7 +118,7 @@ def edit(id):
     
     cursor.execute("SELECT * FROM incidents WHERE id=%s", (id,))
     incident = cursor.fetchone()
-    cursor.execute("SELECT * FROM incident_logs WHERE incident_id=%s ORDER BY timestamp DESC", (id,))
+    cursor.execute("SELECT * FROM incident_logs WHERE incident_id=%s ORDER BY created_at DESC", (id,))
     logs = cursor.fetchall()
 
     if request.method == 'POST':
