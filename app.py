@@ -10,8 +10,8 @@ app.secret_key = 'super_secret_key'
 
 db_config = {
     'host': 'localhost',
-    'user': 'root',
-    'password': '8899', # Update this
+    'user': 'incident_user',
+    'password': 'password123',
     'database': 'incident_db'
 }
 
@@ -183,4 +183,4 @@ def delete(id):
     
     return redirect(url_for('incident_list'))
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
