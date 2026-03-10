@@ -1,6 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
-#comment for triggering
+#comment2 for triggering
 
 db = SQLAlchemy()
 
