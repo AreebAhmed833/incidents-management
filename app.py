@@ -3,6 +3,12 @@ import mysql.connector
 import json
 import io
 import csv
+import os
+import warnings
+import markdown
+
+# Suppress Google lib FutureWarnings about Python 3.8 (so you can see Gemini success/failure clearly)
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.")
 # new commit after k8
 #New commit
 # New commit
@@ -12,6 +18,14 @@ import csv
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key'
+
+
+@app.template_filter('markdown')
+def markdown_filter(s):
+    if not s:
+        return ""
+    from markupsafe import Markup
+    return Markup(markdown.markdown(s, extensions=['nl2br']))
 
 db_config = {
     'host': 'serverless-europe-west3.sysp0000.db2.skysql.com',
@@ -28,6 +42,70 @@ def get_db_connection():
 def write_log(cursor, incident_id, action, message):
     cursor.execute("INSERT INTO incident_logs (incident_id, action, message) VALUES (%s, %s, %s)", 
                    (incident_id, action, message))
+
+
+def _build_ai_prompt(service, severity, description, error_logs=None, impact=None):
+    """Build the incident analysis prompt (shared by all providers)."""
+    error_section = f"\n* Error/Logs: {error_logs}" if error_logs else ""
+    impact_section = f"\n* Impact: {impact}" if impact else ""
+    return f"""An incident has been reported in a production environment. Below are the details:
+
+* Service: {service}
+* Severity: {severity}
+* Description: {description}{error_section}{impact_section}
+
+Analyze the issue and provide a structured response with the following sections. Use clear markdown headings (##) and bullet points. Be concise and actionable for SREs.
+
+1. **Summary** – Brief problem summary (2–3 sentences).
+2. **Possible root causes** – List likely causes.
+3. **Step-by-step troubleshooting** – Numbered steps to diagnose and isolate the issue.
+4. **Suggested fixes** – Concrete remediation steps.
+5. **Preventive measures** – How to reduce recurrence (monitoring, config, runbooks)."""
+
+
+def _call_gemini_rest(api_key, full_prompt, model_id="gemini-2.0-flash"):
+    """Call Gemini via REST API (works even when SDK has import issues). Returns text or None."""
+    try:
+        from urllib.request import Request, urlopen
+        from urllib.error import HTTPError
+        key = (api_key or "").strip()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={key}"
+        body = json.dumps({
+            "contents": [{"parts": [{"text": full_prompt}]}],
+            "generationConfig": {"maxOutputTokens": 1500},
+        }).encode("utf-8")
+        req = Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
+        with urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode())
+        text = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        return (text or "").strip() or None
+    except Exception as e:
+        print("[AI] Gemini error:", e)
+        return None
+
+
+def get_ai_analysis(service, severity, description, error_logs=None, impact=None):
+    """Use Gemini only (same approach as your friend's code). Key from GEMINI_API_KEY."""
+    prompt = _build_ai_prompt(service, severity, description, error_logs, impact)
+    system = "You are an expert SRE assisting with incident analysis. Provide structured, actionable guidance in markdown. Be concise and production-focused."
+    full_prompt = f"{system}\n\n{prompt}"
+
+    gemini_key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
+    if not gemini_key:
+        print("[AI] No API key. Set GEMINI_API_KEY (get one at https://aistudio.google.com/apikey) and restart.")
+        return None
+
+    for model_id in ["gemini-2.0-flash", "gemini-3-flash-preview", "gemini-1.5-flash"]:
+        try:
+            print("[AI] Calling Gemini for analysis...")
+            out = _call_gemini_rest(gemini_key, full_prompt, model_id=model_id)
+            if out:
+                print("[AI] Analysis received (Gemini).")
+                return out
+        except Exception as e:
+            print("[AI] Gemini failed:", e)
+            continue
+    return None
 
 # --- 1. HOME: The Dashboard (New!) ---
 @app.route('/')
@@ -95,26 +173,53 @@ def create():
         service = request.form['service']
         severity = request.form['severity']
         description = request.form['description']
-        
+        error_logs = request.form.get('error_logs', '').strip() or None
+        impact = request.form.get('impact', '').strip() or None
+
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        
+
         cursor.execute("SELECT id FROM incidents ORDER BY id DESC LIMIT 1")
         last = cursor.fetchone()
         new_id = (last['id'] + 1) if last else 1
         custom_id = f"INC{new_id:03d}"
-        
-        cursor.execute("INSERT INTO incidents (custom_id, service, severity, description) VALUES (%s, %s, %s, %s)",
-                       (custom_id, service, severity, description))
+
+        try:
+            cursor.execute(
+                """INSERT INTO incidents (custom_id, service, severity, description, error_logs, impact)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (custom_id, service, severity, description, error_logs or '', impact or '')
+            )
+        except mysql.connector.Error:
+            cursor.execute(
+                "INSERT INTO incidents (custom_id, service, severity, description) VALUES (%s, %s, %s, %s)",
+                (custom_id, service, severity, description)
+            )
+        incident_id = cursor.lastrowid
         conn.commit()
-        write_log(cursor, cursor.lastrowid, "CREATED", "Incident Logged")
+        write_log(cursor, incident_id, "CREATED", "Incident Logged")
         conn.commit()
-        
+
+        ai_analysis = None
+        try:
+            ai_analysis = get_ai_analysis(service, severity, description, error_logs, impact)
+            if ai_analysis:
+                cursor.execute("UPDATE incidents SET ai_analysis = %s WHERE id = %s", (ai_analysis, incident_id))
+                conn.commit()
+                write_log(cursor, incident_id, "AI_ANALYSIS", "AI analysis generated")
+                conn.commit()
+                print("[AI] Analysis saved to database.")
+        except mysql.connector.Error as e:
+            print("[AI] Could not save analysis to DB (is migration applied?):", e)
+
         cursor.close()
         conn.close()
-        flash('Incident created successfully!', 'success')
-        return redirect(url_for('dashboard'))
-    
+        if ai_analysis:
+            flash('Incident created successfully! AI analysis has been generated.', 'success')
+        else:
+            flash('Incident created successfully! AI analysis was not generated (quota may be exceeded; try again later).', 'success')
+        return redirect(url_for('edit', id=incident_id))
+
     return render_template('create.html')
 
 # --- 4. EDIT ---
@@ -132,7 +237,9 @@ def edit(id):
         new_status = request.form.get('status')
         new_sev = request.form.get('severity')
         new_desc = request.form.get('description')
-        
+        new_error_logs = request.form.get('error_logs', '').strip() or None
+        new_impact = request.form.get('impact', '').strip() or None
+
         if new_status and new_status != incident['status']:
             write_log(cursor, id, "STATUS_CHANGE", f"{incident['status']} -> {new_status}")
             cursor.execute("UPDATE incidents SET status=%s WHERE id=%s", (new_status, id))
@@ -141,13 +248,36 @@ def edit(id):
             write_log(cursor, id, "SEV_CHANGE", f"{incident['severity']} -> {new_sev}")
             cursor.execute("UPDATE incidents SET severity=%s WHERE id=%s", (new_sev, id))
 
-        if new_desc and new_desc != incident['description']:
+        if new_desc is not None and new_desc != incident['description']:
             cursor.execute("UPDATE incidents SET description=%s WHERE id=%s", (new_desc, id))
-            
+
+        try:
+            cursor.execute("UPDATE incidents SET error_logs=%s, impact=%s WHERE id=%s", (new_error_logs or '', new_impact or '', id))
+        except mysql.connector.Error:
+            pass
         conn.commit()
+
+        # Re-run AI analysis with updated incident details so analysis stays in sync
+        service = incident['service']
+        severity = new_sev if new_sev else incident['severity']
+        description = new_desc if (new_desc is not None and new_desc.strip()) else incident['description']
+        error_logs = new_error_logs if new_error_logs is not None else (incident.get('error_logs') or None)
+        impact = new_impact if new_impact is not None else (incident.get('impact') or None)
+        try:
+            ai_analysis = get_ai_analysis(service, severity, description, error_logs, impact)
+            if ai_analysis:
+                cursor.execute("UPDATE incidents SET ai_analysis = %s WHERE id = %s", (ai_analysis, id))
+                conn.commit()
+                write_log(cursor, id, "AI_ANALYSIS", "AI analysis regenerated after edit")
+                conn.commit()
+                flash('Incident updated! AI analysis has been regenerated.', 'success')
+            else:
+                flash('Incident updated!', 'success')
+        except mysql.connector.Error:
+            flash('Incident updated! (AI analysis could not be saved.)', 'success')
+
         cursor.close()
         conn.close()
-        flash('Incident updated!', 'success')
         return redirect(url_for('edit', id=id))
 
     return render_template('edit.html', incident=incident, logs=logs)
