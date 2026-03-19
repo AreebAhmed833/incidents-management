@@ -49,10 +49,19 @@
                 </div>
 
                 <div class="mb-6">
-                    <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Error / Logs <span class="text-gray-400 font-normal">(optional)</span></label>
+                    <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Errors <span class="text-gray-400 font-normal">(optional)</span></label>
+                    <p class="text-xs text-gray-500 mb-2">Exception messages, HTTP errors, stack traces.</p>
                     <textarea name="error_logs" rows="3"
                           class="w-full p-3 bg-gray-50 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                          placeholder="e.g. 500 Internal Server Error, database connection timeout...">{{ incident.get('error_logs') or '' }}</textarea>
+                          placeholder="e.g. ConnectionRefusedError, 502 Bad Gateway">{{ display_error_logs }}</textarea>
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-xs font-bold text-gray-500 uppercase mb-2">Logs <span class="text-gray-400 font-normal">(optional)</span></label>
+                    <p class="text-xs text-gray-500 mb-2">Application or server log snippets.</p>
+                    <textarea name="system_logs" rows="4"
+                          class="w-full p-3 bg-gray-50 rounded-lg border border-gray-300 font-mono text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                          placeholder="Paste relevant log lines...">{{ display_system_logs }}</textarea>
                 </div>
 
                 <div class="mb-6">

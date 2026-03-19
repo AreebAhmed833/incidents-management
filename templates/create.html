@@ -52,10 +52,19 @@
             </div>
 
             <div class="mb-6">
-                <label class="block text-sm font-semibold text-gray-700 mb-2">Error / Logs <span class="text-gray-400 font-normal">(optional)</span></label>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">Errors <span class="text-gray-400 font-normal">(optional)</span></label>
+                <p class="text-xs text-gray-500 mb-2">Exception messages, HTTP error responses, stack traces, or what the user sees.</p>
                 <textarea name="error_logs" rows="3"
                           class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                          placeholder="e.g. 500 Internal Server Error, database connection timeout..."></textarea>
+                          placeholder="e.g. ConnectionRefusedError: [Errno 111], 502 Bad Gateway from upstream"></textarea>
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-sm font-semibold text-gray-700 mb-2">Logs <span class="text-gray-400 font-normal">(optional)</span></label>
+                <p class="text-xs text-gray-500 mb-2">Application or server log lines (separate from error text above).</p>
+                <textarea name="system_logs" rows="4"
+                          class="w-full px-4 py-3 rounded-lg border border-gray-300 font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                          placeholder="e.g. [ERROR] worker timeout after 30s&#10;2025-03-19T12:00:01Z GET /api/orders 500 120ms"></textarea>
             </div>
 
             <div class="mb-8">
